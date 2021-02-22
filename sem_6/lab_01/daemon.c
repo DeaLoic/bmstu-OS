@@ -1,4 +1,3 @@
-/* Написать программу, которая создавала бы процесс-демон с помощью функций Demonize, Already running, Main  */
 #include <syslog.h>
 #include <stdlib.h>
 #include <fcntl.h>
@@ -9,11 +8,14 @@
 #include <signal.h>   //sidaction
 #include <string.h>
 #include <time.h>
+#include <pthread.h>
 #include <errno.h>
 #include <sys/file.h>
 
 #define LOCKFILE "/var/run/daemon.pid"
 #define LOCKMODE (S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)
+
+sigset_t mask;
 
 void HandleSIGHUP(int signum)
 {
@@ -25,8 +27,8 @@ void HandleSIGHUP(int signum)
 
 int lockfile(int fd)
 {
-    struct flock fl;
-    fl.l_type = F_WRLCK;
+    struct flock fl; // блокировка на запись
+    fl.l_type = F_WRLCK; 
     fl.l_start = 0;
     fl.l_whence = SEEK_SET;
     fl.l_len = 0;
@@ -117,17 +119,20 @@ void daemonize(const char *cmd)
         perror("Невозможно игнорировать сигнал SIGHUP!\n");
     }
 
-    if ((pid = fork()) < 0)
-    {
-        perror("Ошибка функции fork!\n");
-    }
-    else if (pid != 0) //родительский процесс
-    {
-        exit(0);
-    }
-
+    // Не нужен в линукс
+    /*
+        if ((pid = fork()) < 0)
+        {
+            perror("Ошибка функции fork!\n");
+        }
+        else if (pid != 0) //родительский процесс
+        {
+            exit(0);
+        }
+    */
     // 5. Назначить корневой каталог текущим рабочим каталогом,
     // чтобы впоследствии можно было отмонтировать файловую систему
+    // если демон был записан на флешку
     if (chdir("/") < 0)
     {
         perror("Невозможно назначить корневой каталог текущим рабочим каталогом!\n");
@@ -143,7 +148,7 @@ void daemonize(const char *cmd)
         close(i);
     }
 
-    // 7. Присоеденить файловые дескрипторы 0, 1, 2 к /dev/null
+    // 7. Присоединить файловые дескрипторы 0, 1, 2 к /dev/null
     fd0 = open("/dev/null", O_RDWR);
     fd1 = dup(0); //копируем файловый дискриптор
     fd2 = dup(0);
@@ -159,9 +164,34 @@ void daemonize(const char *cmd)
     syslog(LOG_WARNING, "Демон запущен!");
 }
 
+void thr_fn(void *arg)
+{
+    int err, signo;
+    for (;;) {
+        err = sigwait(&mask, &signo);
+        if (err != 0)
+        {
+            syslog(LOG_ERR, "Error call sigwait");
+        }
+        switch (signo)
+        {
+        case SIGKILL:
+            exit(1);
+            break;
+        case SIGHUP:
+            HandleSIGHUP(signo);
+            break;
+        default:
+            syslog(LOG_INFO, "GET undefined SIGNAL %d\n", signo);
+            break;
+        }
+    }
+}
+
 int main()
 {
     struct sigaction sa;
+    pthread_t tid;
     daemonize("daemonmy");
     // 9. Блокировка файла для одной существующей копии демона
     if (already_running() != 0)
@@ -170,19 +200,32 @@ int main()
         exit(1);
     }
 
-    sa.sa_handler = HandleSIGHUP;
+
+    sa.sa_handler = SIG_DFL;
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = 0;
+    int err;
     if (sigaction(SIGHUP, &sa, NULL) < 0)
     {
         perror("Cигнал SIGHUP error!\n");
         exit(1);
     }
+    sigfillset(&mask);
+    if ((err = pthread_sigmask(SIG_BLOCK, &mask, NULL)) != 0)
+    {
+        perror("Cигнал SIG_BLOCK error!\n");
+        exit(1);
+    }
+
+    err = pthread_create(&tid, NULL, thr_fn, 0);
+    if (err != 0)
+    {
+        perror("Create thread error!\n");
+        exit(1);
+    }
+
     while (1)
     {
-        syslog(LOG_INFO, "••Демон••!");
-        sleep(5);
+        sleep(10);
     }
 }
-
-NOT ENOUGH SWAP SPACE FOR HYBERNATION
