@@ -175,7 +175,12 @@ void thr_fn(void *arg)
         }
         switch (signo)
         {
+        case SIGTERM:
+            syslog(LOG_WARNING, "SIGTERM received.");
+            exit(1);
+            break;
         case SIGKILL:
+            syslog(LOG_WARNING, "SIGKILL received.");
             exit(1);
             break;
         case SIGHUP:
